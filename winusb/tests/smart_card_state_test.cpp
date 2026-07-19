@@ -350,6 +350,12 @@ int main()
 		acas_device->ifs_values[0] == 254 && acas_device->ifs_values[1] == 254,
 		"A-CAS IFS timeout did not recover through RESYNCH and IFS retry.") &&
 		succeeded;
+	/* TB3 の BWI=4 は500msを超える合法な block waiting time を許容する。 */
+	acas_device->ready_delay_checks = 120;
+	response_length = sizeof(response);
+	succeeded = Check(acas_card.Transmit(apdu, sizeof(apdu), response,
+		response_length) == 0 && response_length == 2,
+		"A-CAS BWI was not applied to the T=1 block timeout.") && succeeded;
 	acas_card.Close();
 
 	/* PC/SC の reader 登録では、挿入済みカードを初期化せず物理状態だけ取得できる。 */

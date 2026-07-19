@@ -37,6 +37,7 @@ private:
 		::it930x_uart_baudrate baudrate = IT930X_UART_BAUDRATE_9600;
 		std::uint8_t ifsc = 32;
 		bool use_crc = false;
+		unsigned int block_timeout_ms = 500;
 	};
 
 	int ReadAtr(std::vector<std::uint8_t> &atr, AtrParameters &parameters);
@@ -63,6 +64,7 @@ private:
 	bool initialized_;
 	bool use_crc_;
 	std::uint8_t card_ifsc_;
+	unsigned int block_timeout_ms_;
 	std::uint8_t send_sequence_;
 	std::uint8_t receive_sequence_;
 	std::vector<std::uint8_t> atr_;

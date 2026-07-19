@@ -38,6 +38,7 @@ SmartCard::SmartCard(std::shared_ptr<CardDevice> device) noexcept
 	initialized_(false),
 	use_crc_(false),
 	card_ifsc_(32),
+	block_timeout_ms_(BLOCK_TIMEOUT_MS),
 	send_sequence_(0),
 	receive_sequence_(0)
 {
@@ -152,6 +153,7 @@ int SmartCard::Reset(std::vector<std::uint8_t> &atr)
 	present_ = true;
 	card_ifsc_ = parameters.ifsc;
 	use_crc_ = parameters.use_crc;
+	block_timeout_ms_ = parameters.block_timeout_ms;
 	const bool is_acas = parameters.baudrate == IT930X_UART_BAUDRATE_38400;
 	/* A-CAS は通常開始を IFS(254) から行い、既存 B-CAS の開始手順は維持する */
 	const std::uint8_t ifsd = is_acas ? 254 : (use_crc_ ? 250 : 251);
@@ -232,8 +234,10 @@ int SmartCard::ParseAtr(const std::vector<std::uint8_t> &atr,
 
 	while (interfaces) {
 		std::uint8_t ta = 0;
+		std::uint8_t tb = 0;
 		std::uint8_t tc = 0;
 		bool has_ta = false;
+		bool has_tb = false;
 		bool has_tc = false;
 
 		if (interfaces & 0x01) {
@@ -245,7 +249,8 @@ int SmartCard::ParseAtr(const std::vector<std::uint8_t> &atr,
 		if (interfaces & 0x02) {
 			if (offset >= atr.size())
 				return -EAGAIN;
-			offset++;
+			tb = atr[offset++];
+			has_tb = true;
 		}
 		if (interfaces & 0x04) {
 			if (offset >= atr.size())
@@ -275,6 +280,20 @@ int SmartCard::ParseAtr(const std::vector<std::uint8_t> &atr,
 			/* TA2 は特定モード、TC2 は T=0 専用なので T=1 値として扱わない */
 			if (has_ta && ta >= 1 && ta <= 254)
 				parameters.ifsc = ta;
+			if (has_tb) {
+				/*
+				 * TB3 上位4bitの BWI から block waiting time を求める。
+				 * 4MHz 時の基準値 89.28ms に USB/UART の余裕を含めて
+				 * 100ms * 2^BWI とし、既存カードの500ms下限と
+				 * APDU全体の3秒上限は維持する。
+				 */
+				unsigned int bwi = tb >> 4;
+				unsigned int bwt = bwi < 5 ? (100U << bwi) :
+					OPERATION_TIMEOUT_MS;
+				parameters.block_timeout_ms = std::min(
+					OPERATION_TIMEOUT_MS,
+					std::max(BLOCK_TIMEOUT_MS, bwt));
+			}
 			if (has_tc)
 				parameters.use_crc = (tc & 0x01) != 0;
 		}
@@ -455,7 +474,7 @@ int SmartCard::ExchangeBlock(std::uint8_t pcb, const std::uint8_t *send_data,
 		/* 各再送は短い期限で区切るが、操作全体の絶対期限を超えない */
 		auto block_deadline = std::min(deadline,
 			std::chrono::steady_clock::now() +
-			std::chrono::milliseconds(BLOCK_TIMEOUT_MS));
+			std::chrono::milliseconds(block_timeout_ms_));
 		ret = ReceiveBlock(recv_pcb, recv_data, block_deadline);
 		if (!ret) {
 			/* WTX へ応答しても APDU 開始時の期限は延長しない */
@@ -623,6 +642,7 @@ void SmartCard::InvalidateSession() noexcept
 	initialized_ = false;
 	use_crc_ = false;
 	card_ifsc_ = 32;
+	block_timeout_ms_ = BLOCK_TIMEOUT_MS;
 	send_sequence_ = 0;
 	receive_sequence_ = 0;
 	atr_.clear();
