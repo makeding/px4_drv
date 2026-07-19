@@ -196,7 +196,7 @@ static const struct file_operations px4_card_fops = {
 #ifdef CONFIG_COMPAT
 	.compat_ioctl = px4_card_ioctl,
 #endif
-	.llseek = no_llseek,
+	.llseek = noop_llseek,
 };
 
 int px4_card_device_register(struct px4_card_device *card,
