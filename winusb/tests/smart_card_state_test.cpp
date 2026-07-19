@@ -96,6 +96,10 @@ public:
 			(expected_crc ? 5 : 4);
 		if (expected_length != length || !ValidateEdc(buffer, length))
 			return -EINVAL;
+		if (drop_first_ifs && pcb == 0xc1) {
+			drop_first_ifs = false;
+			return 0;
+		}
 
 		/* 初期化 S ブロックは要求データをそのまま応答する */
 		if ((pcb & 0xc0) == 0xc0) {
@@ -185,6 +189,7 @@ public:
 	bool fail_next_apdu = false;
 	bool endless_wtx = false;
 	bool delay_next_response = false;
+	bool drop_first_ifs = false;
 	bool read_called_before_ready = false;
 	bool read_allowed = false;
 	unsigned int ready_delay_checks = 0;
@@ -333,13 +338,17 @@ int main()
 		0xb1, 0xfe, 0x46, 0x1f, 0x03, 0x19,
 	};
 	acas_device->is_present = true;
+	acas_device->drop_first_ifs = true;
 	px4::SmartCard acas_card(acas_device);
 	succeeded = Check(acas_card.Open() == 0 &&
 		acas_device->baudrate == IT930X_UART_BAUDRATE_38400 &&
-		acas_device->written_pcbs.size() == 1 &&
+		acas_device->written_pcbs.size() == 3 &&
 		acas_device->written_pcbs[0] == 0xc1 &&
-		acas_device->ifs_values.size() == 1 && acas_device->ifs_values[0] == 254,
-		"A-CAS ATR did not select 38400bps and direct IFS(254) initialization.") &&
+		acas_device->written_pcbs[1] == 0xc0 &&
+		acas_device->written_pcbs[2] == 0xc1 &&
+		acas_device->ifs_values.size() == 2 &&
+		acas_device->ifs_values[0] == 254 && acas_device->ifs_values[1] == 254,
+		"A-CAS IFS timeout did not recover through RESYNCH and IFS retry.") &&
 		succeeded;
 	acas_card.Close();
 

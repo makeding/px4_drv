@@ -50,7 +50,7 @@ private:
 	int ExchangeBlock(std::uint8_t pcb, const std::uint8_t *send_data,
 			  std::size_t send_length, std::uint8_t &recv_pcb,
 			  std::vector<std::uint8_t> &recv_data,
-			  const Deadline &deadline);
+			  const Deadline &deadline, unsigned int max_retries = 3);
 	int TransmitInitialized(const std::uint8_t *send_buf, std::size_t send_len,
 				std::uint8_t *recv_buf, std::size_t &recv_len,
 				const Deadline &deadline);

@@ -335,7 +335,19 @@ int SmartCard::InitializeT1(bool resynchronize, std::uint8_t ifsd)
 
 	/* 最初の I ブロックより前に受信可能な INF の最大長を通知する */
 	int ret = ExchangeBlock(T1_S_BLOCK | T1_S_IFS, &ifsd, 1, pcb, data,
-		deadline);
+		deadline, resynchronize ? MAX_RETRIES : 1);
+	if (!resynchronize && (ret == -ETIMEDOUT || ret == -EBADMSG)) {
+		/* A-CAS が最初の IFS に応答しない場合は、有限時間の再同期後に IFS を再送する */
+		ret = ExchangeBlock(T1_S_BLOCK | T1_S_RESYNCH, nullptr, 0, pcb,
+			data, deadline, 1);
+		if (ret)
+			return ret;
+		if (pcb != (T1_S_BLOCK | T1_S_RESPONSE | T1_S_RESYNCH) ||
+			!data.empty())
+			return -EPROTO;
+		ret = ExchangeBlock(T1_S_BLOCK | T1_S_IFS, &ifsd, 1, pcb, data,
+			deadline);
+	}
 	if (ret)
 		return ret;
 	if (pcb != (T1_S_BLOCK | T1_S_RESPONSE | T1_S_IFS) ||
@@ -431,16 +443,20 @@ int SmartCard::ReceiveBlock(std::uint8_t &pcb, std::vector<std::uint8_t> &data,
 int SmartCard::ExchangeBlock(std::uint8_t pcb, const std::uint8_t *send_data,
 			     std::size_t send_length, std::uint8_t &recv_pcb,
 			     std::vector<std::uint8_t> &recv_data,
-			     const Deadline &deadline)
+			     const Deadline &deadline, unsigned int max_retries)
 {
-	for (unsigned int retry = 0; retry < MAX_RETRIES; retry++) {
+	for (unsigned int retry = 0; retry < max_retries; retry++) {
 		if (std::chrono::steady_clock::now() >= deadline)
 			return -ETIMEDOUT;
 		int ret = SendBlock(pcb, send_data, send_length);
 		if (ret)
 			return ret;
 
-		ret = ReceiveBlock(recv_pcb, recv_data, deadline);
+		/* 各再送は短い期限で区切るが、操作全体の絶対期限を超えない */
+		auto block_deadline = std::min(deadline,
+			std::chrono::steady_clock::now() +
+			std::chrono::milliseconds(BLOCK_TIMEOUT_MS));
+		ret = ReceiveBlock(recv_pcb, recv_data, block_deadline);
 		if (!ret) {
 			/* WTX へ応答しても APDU 開始時の期限は延長しない */
 			while (recv_pcb == (T1_S_BLOCK | T1_S_WTX)) {

@@ -179,6 +179,9 @@ int LinuxCardDevice::WriteCardData(const std::uint8_t *buf, std::uint8_t len)
 	data.length = len;
 	std::memcpy(data.data, buf, len);
 	int ret = IoctlResult(ioctl(fd_, PX4_CARD_WRITE, &data));
+	if (!ret && len >= 4 && buf[0] == 0x00 && buf[1] == 0xc0 &&
+		buf[2] == 0x00)
+		std::fprintf(stderr, "ifd-px4: sent T=1 RESYNCH request\n");
 	if (!ret && len >= 5 && buf[0] == 0x00 && buf[1] == 0xc1 &&
 		buf[2] == 0x01 && buf[3] == 0xfe)
 		std::fprintf(stderr, "ifd-px4: sent A-CAS T=1 IFS(254) request\n");
