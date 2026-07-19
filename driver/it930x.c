@@ -1178,7 +1178,12 @@ static int it930x_set_uart_baudrate(struct it930x_bridge *it930x,
 	else if (baudrate == IT930X_UART_BAUDRATE_19200)
 		value = 1;
 	else if (baudrate == IT930X_UART_BAUDRATE_38400)
-		value = 2;
+		/*
+		 * UART mode 1 only treats 0 and 1 as baud-rate selectors.  Value 2
+		 * falls back to the 0xbe timer reload used by 9600bps, while the
+		 * generic UART path maps 38400bps to the raw reload value 0xef.
+		 */
+		value = 0xef;
 	else
 		return -EINVAL;
 
