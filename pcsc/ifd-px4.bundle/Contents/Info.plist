@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>English</string>
+  <key>CFBundleIdentifier</key>
+  <string>jp.tsukumijima.px4-drv.ifd</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundlePackageType</key>
+  <string>BNDL</string>
+  <key>CFBundleSignature</key>
+  <string>????</string>
+  <key>CFBundleVersion</key>
+  <string>0.1.0</string>
+  <key>CFBundleExecutable</key>
+  <string>libifd-px4.so</string>
+  <key>ifdCapabilities</key>
+  <string>0x00000000</string>
+  <key>ifdProtocolSupport</key>
+  <string>0x00000002</string>
+  <key>ifdVersionNumber</key>
+  <string>0x00000001</string>
+  <key>ifdManufacturerString</key>
+  <string>px4_drv</string>
+  <key>ifdProductString</key>
+  <string>PX-Q3U4 built-in smart-card reader</string>
+  <key>ifdVendorID</key>
+  <string>0x0511</string>
+  <key>ifdProductID</key>
+  <string>0x084A</string>
+  <key>ifdFriendlyName</key>
+  <string>PX-Q3U4 Built-in Smart Card Reader</string>
+</dict>
+</plist>

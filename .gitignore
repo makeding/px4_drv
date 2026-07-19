@@ -13,6 +13,8 @@ modules.order
 *.mod.o
 
 /driver/revision.h
+/pcsc/build/
+/pcsc/ifd-px4.bundle/Contents/Linux/
 /fwtool/fwtool
 
 fwtool/*.bin

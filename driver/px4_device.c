@@ -26,7 +26,6 @@ struct px4_stream_context {
 };
 
 static int px4_chrdev_set_lnb_voltage_s(struct ptx_chrdev *chrdev, int voltage);
-static void px4_device_release(struct kref *kref);
 
 static int px4_backend_set_power(struct px4_device *px4, bool state)
 {
@@ -514,7 +513,7 @@ fail_backend:
 fail_backend_init:
 	if (px4->mldev)
 		px4_mldev_set_power(px4->mldev, px4, chrdev->id, false, NULL);
-	else if (!px4->open_count)
+	else if (!px4->open_count && !px4->card_open)
 		px4_backend_set_power(px4, false);
 
 fail_backend_power:
@@ -547,7 +546,7 @@ static int px4_chrdev_release(struct ptx_chrdev *chrdev)
 	px4->open_count--;
 	if (!px4->open_count) {
 		px4_backend_term(px4);
-		if (!px4->mldev)
+		if (!px4->mldev && !px4->card_open)
 			px4_backend_set_power(px4, false);
 	} else if (atomic_read(&px4->available)) {
 		/* sleep tuners */
@@ -577,6 +576,138 @@ static int px4_chrdev_release(struct ptx_chrdev *chrdev)
 
 	mutex_unlock(&px4->lock);
 	return 0;
+}
+
+int px4_device_card_open(struct px4_device *px4)
+{
+	int ret = 0;
+
+	mutex_lock(&px4->lock);
+
+	if (!atomic_read(&px4->available)) {
+		ret = -ENODEV;
+		goto exit;
+	}
+	if (px4->card_open) {
+		ret = -EBUSY;
+		goto exit;
+	}
+
+	if (px4->mldev)
+		ret = px4_mldev_set_card_power(px4->mldev, px4, true);
+	else if (!px4->open_count)
+		ret = px4_backend_set_power(px4, true);
+	if (ret)
+		goto exit;
+
+	ret = it930x_bcas_init(&px4->it930x);
+	if (ret) {
+		if (px4->mldev)
+			px4_mldev_set_card_power(px4->mldev, px4, false);
+		else if (!px4->open_count)
+			px4_backend_set_power(px4, false);
+		goto exit;
+	}
+
+	px4->card_open = true;
+
+exit:
+	mutex_unlock(&px4->lock);
+	return ret;
+}
+
+void px4_device_card_close(struct px4_device *px4)
+{
+	mutex_lock(&px4->lock);
+
+	if (!px4->card_open)
+		goto exit;
+
+	px4->card_open = false;
+	if (px4->mldev) {
+		if (atomic_read(&px4->available))
+			px4_mldev_set_card_power(px4->mldev, px4, false);
+		else
+			px4_mldev_release_card_power(px4->mldev, px4);
+	} else if (!px4->open_count && atomic_read(&px4->available)) {
+		px4_backend_set_power(px4, false);
+	}
+
+exit:
+	mutex_unlock(&px4->lock);
+}
+
+int px4_device_card_detect(struct px4_device *px4, bool *detected)
+{
+	int ret;
+
+	if (!detected)
+		return -EINVAL;
+
+	mutex_lock(&px4->lock);
+	ret = atomic_read(&px4->available) && px4->card_open ?
+		it930x_bcas_detect_card(&px4->it930x, detected) : -ENODEV;
+	mutex_unlock(&px4->lock);
+	return ret;
+}
+
+int px4_device_card_reset(struct px4_device *px4)
+{
+	int ret;
+
+	mutex_lock(&px4->lock);
+	ret = atomic_read(&px4->available) && px4->card_open ?
+		it930x_bcas_reset_card(&px4->it930x) : -ENODEV;
+	mutex_unlock(&px4->lock);
+	return ret;
+}
+
+int px4_device_card_set_baudrate(struct px4_device *px4,
+				 enum it930x_uart_baudrate baudrate)
+{
+	int ret;
+
+	mutex_lock(&px4->lock);
+	ret = atomic_read(&px4->available) && px4->card_open ?
+		it930x_bcas_set_baudrate(&px4->it930x, baudrate) : -ENODEV;
+	mutex_unlock(&px4->lock);
+	return ret;
+}
+
+int px4_device_card_is_data_ready(struct px4_device *px4, bool *ready)
+{
+	int ret;
+
+	if (!ready)
+		return -EINVAL;
+
+	mutex_lock(&px4->lock);
+	ret = atomic_read(&px4->available) && px4->card_open ?
+		it930x_bcas_check_ready(&px4->it930x, ready) : -ENODEV;
+	mutex_unlock(&px4->lock);
+	return ret;
+}
+
+int px4_device_card_read(struct px4_device *px4, u8 *buf, u8 *len)
+{
+	int ret;
+
+	mutex_lock(&px4->lock);
+	ret = atomic_read(&px4->available) && px4->card_open ?
+		it930x_bcas_get_data(&px4->it930x, buf, len) : -ENODEV;
+	mutex_unlock(&px4->lock);
+	return ret;
+}
+
+int px4_device_card_write(struct px4_device *px4, const u8 *buf, u8 len)
+{
+	int ret;
+
+	mutex_lock(&px4->lock);
+	ret = atomic_read(&px4->available) && px4->card_open ?
+		it930x_bcas_send_data(&px4->it930x, buf, len) : -ENODEV;
+	mutex_unlock(&px4->lock);
+	return ret;
 }
 
 static int px4_chrdev_tune_t(struct ptx_chrdev *chrdev,
@@ -1198,6 +1329,8 @@ int px4_device_init(struct px4_device *px4, struct device *dev,
 	px4->open_count = 0;
 	px4->lnb_power_count = 0;
 	px4->streaming_count = 0;
+	px4->card_open = false;
+	memset(&px4->card, 0, sizeof(px4->card));
 
 	for (i = 0; i < PX4_CHRDEV_NUM; i++) {
 		struct px4_chrdev *chrdev4 = &px4->chrdev4[i];
@@ -1357,6 +1490,12 @@ int px4_device_init(struct px4_device *px4, struct device *dev,
 	}
 
 	atomic_set(&px4->available, 1);
+	ret = px4_card_device_register(&px4->card, px4);
+	if (ret)
+		/* 補助機能の登録失敗で既存の TS 受信を中止しない。 */
+		dev_warn(px4->dev,
+			 "px4_card_device_register() failed. (ret: %d)\n",
+			 ret);
 	return 0;
 
 fail_chrdev:
@@ -1380,7 +1519,7 @@ fail:
 	return ret;
 }
 
-static void px4_device_release(struct kref *kref)
+void px4_device_release(struct kref *kref)
 {
 	struct px4_device *px4 = container_of(kref, struct px4_device, kref);
 
@@ -1407,6 +1546,16 @@ void px4_device_term(struct px4_device *px4)
 		"px4_device_term: kref count: %u\n", kref_read(&px4->kref));
 
 	atomic_xchg(&px4->available, 0);
+	px4_card_device_unregister(&px4->card);
+
+	mutex_lock(&px4->lock);
+	if (px4->card_open) {
+		px4->card_open = false;
+		if (px4->mldev)
+			px4_mldev_release_card_power(px4->mldev, px4);
+	}
+	mutex_unlock(&px4->lock);
+
 	ptx_chrdev_group_destroy(px4->chrdev_group);
 
 	kref_put(&px4->kref, px4_device_release);

@@ -16,6 +16,7 @@
 #include <linux/device.h>
 
 #include "px4_mldev.h"
+#include "px4_card.h"
 #include "ptx_chrdev.h"
 #include "it930x.h"
 #include "tc90522.h"
@@ -53,6 +54,8 @@ struct px4_device {
 	unsigned int open_count;
 	unsigned int lnb_power_count;
 	unsigned int streaming_count;
+	bool card_open;
+	struct px4_card_device card;
 	struct ptx_chrdev_group *chrdev_group;
 	struct px4_chrdev chrdev4[PX4_CHRDEV_NUM];
 	struct it930x_bridge it930x;
@@ -64,5 +67,15 @@ int px4_device_init(struct px4_device *px4, struct device *dev,
 		    struct ptx_chrdev_context *chrdev_ctx,
 		    struct completion *quit_completion);
 void px4_device_term(struct px4_device *px4);
+void px4_device_release(struct kref *kref);
+int px4_device_card_open(struct px4_device *px4);
+void px4_device_card_close(struct px4_device *px4);
+int px4_device_card_detect(struct px4_device *px4, bool *detected);
+int px4_device_card_reset(struct px4_device *px4);
+int px4_device_card_set_baudrate(struct px4_device *px4,
+				 enum it930x_uart_baudrate baudrate);
+int px4_device_card_is_data_ready(struct px4_device *px4, bool *ready);
+int px4_device_card_read(struct px4_device *px4, u8 *buf, u8 *len);
+int px4_device_card_write(struct px4_device *px4, const u8 *buf, u8 len);
 
 #endif
