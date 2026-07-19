@@ -19,6 +19,9 @@ extern "C" {
 
 namespace {
 
+/* pcsc-lite converts the public SCARD_PROTOCOL_T1 bit (2) to IFD protocol T=1 (1). */
+constexpr DWORD IFD_PROTOCOL_T1 = 1;
+
 struct Reader final {
 	explicit Reader(const char *device_name)
 		: device(std::make_shared<px4::pcsc::LinuxCardDevice>(
@@ -226,7 +229,7 @@ extern "C" RESPONSECODE IFDHSetProtocolParameters(DWORD Lun, DWORD Protocol,
 	(void)PTS3;
 	if (!GetReader(Lun))
 		return IFD_NO_SUCH_DEVICE;
-	return Protocol == SCARD_PROTOCOL_T1 ? IFD_SUCCESS :
+	return (Protocol == IFD_PROTOCOL_T1 || Protocol == SCARD_PROTOCOL_T1) ? IFD_SUCCESS :
 		IFD_PROTOCOL_NOT_SUPPORTED;
 }
 
@@ -270,7 +273,8 @@ extern "C" RESPONSECODE IFDHTransmitToICC(DWORD Lun,
 	auto reader = GetReader(Lun);
 	if (!reader)
 		return IFD_NO_SUCH_DEVICE;
-	if (SendPci.Protocol != SCARD_PROTOCOL_T1)
+	if (SendPci.Protocol != IFD_PROTOCOL_T1 &&
+		SendPci.Protocol != SCARD_PROTOCOL_T1)
 		return IFD_PROTOCOL_NOT_SUPPORTED;
 	if (!TxBuffer || !TxLength || !RxBuffer || !RxLength)
 		return IFD_COMMUNICATION_ERROR;
