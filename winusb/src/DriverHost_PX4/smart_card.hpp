@@ -34,6 +34,7 @@ private:
 	using Deadline = std::chrono::steady_clock::time_point;
 
 	struct AtrParameters final {
+		::it930x_uart_baudrate baudrate = IT930X_UART_BAUDRATE_9600;
 		std::uint8_t ifsc = 32;
 		bool use_crc = false;
 	};
@@ -42,7 +43,7 @@ private:
 	int WaitCardDataReady(const Deadline &deadline);
 	int ParseAtr(const std::vector<std::uint8_t> &atr,
 		     std::size_t &expected_length, AtrParameters &parameters) const;
-	int InitializeT1();
+	int InitializeT1(bool resynchronize);
 	int SendBlock(std::uint8_t pcb, const std::uint8_t *data, std::size_t length);
 	int ReceiveBlock(std::uint8_t &pcb, std::vector<std::uint8_t> &data,
 			 const Deadline &deadline);

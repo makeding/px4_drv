@@ -50,8 +50,9 @@ public:
 		return 0;
 	}
 
-	int SetCardBaudrate(::it930x_uart_baudrate) override
+	int SetCardBaudrate(::it930x_uart_baudrate value) override
 	{
+		baudrate = value;
 		return 0;
 	}
 
@@ -87,6 +88,7 @@ public:
 		if (length < 4)
 			return -EINVAL;
 		const std::uint8_t pcb = buffer[1];
+		written_pcbs.push_back(pcb);
 		const std::uint8_t data_length = buffer[2];
 		std::size_t expected_length = static_cast<std::size_t>(data_length) +
 			(expected_crc ? 5 : 4);
@@ -188,9 +190,13 @@ public:
 	unsigned int reset_count = 0;
 	unsigned int malformed_atr_resets = 0;
 	std::vector<std::uint8_t> malformed_atr_bytes = { 0xfc, 0xff };
-	/* TA2 / TC2 は T=1 パラメータではないため既定の LRC と IFSC を使う */
-	std::vector<std::uint8_t> atr_bytes = { 0x3b, 0x80, 0xd1, 0x40, 0x01, 0x01, 0x11 };
+	std::vector<std::uint8_t> atr_bytes = {
+		0x3b, 0xf0, 0x12, 0x00, 0xff, 0x91, 0x81,
+		0xb1, 0x7c, 0x45, 0x1f, 0x01, 0x9b,
+	};
+	::it930x_uart_baudrate baudrate = IT930X_UART_BAUDRATE_9600;
 	bool expected_crc = false;
+	std::vector<std::uint8_t> written_pcbs;
 	std::deque<std::uint8_t> read_queue;
 };
 
@@ -221,7 +227,10 @@ int main()
 	/* 挿入検出時に ATR と T=1 を初期化する */
 	device->is_present = true;
 	succeeded = Check(card.GetStatus(present, initialized, atr) == 0 &&
-		present && initialized && atr.size() == 7 && device->reset_count == 1,
+		present && initialized && atr.size() == 13 && device->reset_count == 1 &&
+		device->baudrate == IT930X_UART_BAUDRATE_19200 &&
+		device->written_pcbs.size() == 2 && device->written_pcbs[0] == 0xc0 &&
+		device->written_pcbs[1] == 0xc1,
 		"Card insertion did not initialize the session.") && succeeded;
 
 	const std::uint8_t apdu[] = { 0x90, 0x30, 0x00, 0x00, 0x00 };
@@ -312,6 +321,22 @@ int main()
 		crc_present && crc_initialized && crc_atr.size() == 8,
 		"TA3 / TC3 CRC parameters were not applied.") && succeeded;
 	crc_card.Close();
+
+	/* A-CAS の TA1=13 は PPS なしで IT930x の 38400bps 設定へ切り替える。 */
+	auto acas_device = std::make_shared<MockCardDevice>();
+	acas_device->atr_bytes = {
+		0x3b, 0xf0, 0x13, 0x00, 0xff, 0x91, 0x81,
+		0xb1, 0xfe, 0x46, 0x1f, 0x03, 0x19,
+	};
+	acas_device->is_present = true;
+	px4::SmartCard acas_card(acas_device);
+	succeeded = Check(acas_card.Open() == 0 &&
+		acas_device->baudrate == IT930X_UART_BAUDRATE_38400 &&
+		acas_device->written_pcbs.size() == 1 &&
+		acas_device->written_pcbs[0] == 0xc1,
+		"A-CAS ATR did not select 38400bps and direct IFS initialization.") &&
+		succeeded;
+	acas_card.Close();
 
 	/* PC/SC の reader 登録では、挿入済みカードを初期化せず物理状態だけ取得できる。 */
 	auto deferred_device = std::make_shared<MockCardDevice>();

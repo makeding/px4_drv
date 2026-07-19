@@ -52,6 +52,7 @@ struct px4_card_data {
 enum px4_card_baudrate {
 	PX4_CARD_BAUDRATE_9600 = 0,
 	PX4_CARD_BAUDRATE_19200 = 1,
+	PX4_CARD_BAUDRATE_38400 = 2,
 };
 
 #define PX4_CARD_IOC_MAGIC	0xca

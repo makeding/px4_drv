@@ -118,7 +118,7 @@ static long px4_card_ioctl(struct file *file, unsigned int cmd,
 			ret = -EFAULT;
 			break;
 		}
-		if (baudrate > PX4_CARD_BAUDRATE_19200) {
+		if (baudrate > PX4_CARD_BAUDRATE_38400) {
 			ret = -EINVAL;
 			break;
 		}

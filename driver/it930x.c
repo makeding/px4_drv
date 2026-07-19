@@ -1177,6 +1177,8 @@ static int it930x_set_uart_baudrate(struct it930x_bridge *it930x,
 		value = 0;
 	else if (baudrate == IT930X_UART_BAUDRATE_19200)
 		value = 1;
+	else if (baudrate == IT930X_UART_BAUDRATE_38400)
+		value = 2;
 	else
 		return -EINVAL;
 

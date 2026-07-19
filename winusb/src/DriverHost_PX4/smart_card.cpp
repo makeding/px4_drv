@@ -143,8 +143,8 @@ int SmartCard::Reset(std::vector<std::uint8_t> &atr)
 			return ret;
 	}
 
-	/* B-CAS は ATR 後の実通信を19200bpsで行う */
-	ret = device_->SetCardBaudrate(IT930X_UART_BAUDRATE_19200);
+	/* Specific mode のカードは PPS を行わず、TA1 が指定した速度へ直接切り替える */
+	ret = device_->SetCardBaudrate(parameters.baudrate);
 	if (ret)
 		return ret;
 
@@ -152,7 +152,8 @@ int SmartCard::Reset(std::vector<std::uint8_t> &atr)
 	present_ = true;
 	card_ifsc_ = parameters.ifsc;
 	use_crc_ = parameters.use_crc;
-	ret = InitializeT1();
+	/* 既存 B-CAS の開始手順は維持し、A-CAS の TA1=13 だけ通常開始を IFS から行う */
+	ret = InitializeT1(parameters.baudrate != IT930X_UART_BAUDRATE_38400);
 	if (ret) {
 		InvalidateSession();
 		return ret;
@@ -250,6 +251,22 @@ int SmartCard::ParseAtr(const std::vector<std::uint8_t> &atr,
 			tc = atr[offset++];
 			has_tc = true;
 		}
+		if (group == 1 && has_ta) {
+			/* IT930x が生成できる FI=1 の速度だけを明示的に受理する */
+			switch (ta) {
+			case 0x11:
+				parameters.baudrate = IT930X_UART_BAUDRATE_9600;
+				break;
+			case 0x12:
+				parameters.baudrate = IT930X_UART_BAUDRATE_19200;
+				break;
+			case 0x13:
+				parameters.baudrate = IT930X_UART_BAUDRATE_38400;
+				break;
+			default:
+				return -EOPNOTSUPP;
+			}
+		}
 
 		/* T=1 を示す TD の次グループに IFSC と EDC 種別が置かれる */
 		if (t1_group && group >= 3) {
@@ -295,7 +312,7 @@ int SmartCard::ParseAtr(const std::vector<std::uint8_t> &atr,
 	return 0;
 }
 
-int SmartCard::InitializeT1()
+int SmartCard::InitializeT1(bool resynchronize)
 {
 	send_sequence_ = 0;
 	receive_sequence_ = 0;
@@ -304,16 +321,20 @@ int SmartCard::InitializeT1()
 	std::vector<std::uint8_t> data;
 	auto deadline = std::chrono::steady_clock::now() +
 		std::chrono::milliseconds(OPERATION_TIMEOUT_MS);
-	int ret = ExchangeBlock(T1_S_BLOCK | T1_S_RESYNCH, nullptr, 0, pcb, data,
-		deadline);
-	if (ret)
-		return ret;
-	if (pcb != (T1_S_BLOCK | T1_S_RESPONSE | T1_S_RESYNCH) || !data.empty())
-		return -EPROTO;
+	if (resynchronize) {
+		int ret = ExchangeBlock(T1_S_BLOCK | T1_S_RESYNCH, nullptr, 0, pcb,
+			data, deadline);
+		if (ret)
+			return ret;
+		if (pcb != (T1_S_BLOCK | T1_S_RESPONSE | T1_S_RESYNCH) ||
+			!data.empty())
+			return -EPROTO;
+	}
 
-	/* UART の1フレーム上限を超えない最大受信サイズをカードへ通知する */
+	/* 最初の I ブロックより前に、UART の1フレーム上限内の IFSD を通知する */
 	std::uint8_t ifsd = use_crc_ ? 250 : 251;
-	ret = ExchangeBlock(T1_S_BLOCK | T1_S_IFS, &ifsd, 1, pcb, data, deadline);
+	int ret = ExchangeBlock(T1_S_BLOCK | T1_S_IFS, &ifsd, 1, pcb, data,
+		deadline);
 	if (ret)
 		return ret;
 	if (pcb != (T1_S_BLOCK | T1_S_RESPONSE | T1_S_IFS) ||
