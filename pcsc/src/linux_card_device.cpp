@@ -134,7 +134,10 @@ int LinuxCardDevice::SetCardBaudrate(::it930x_uart_baudrate baudrate)
 	if (fd_ < 0)
 		return -ENODEV;
 	std::uint32_t value = static_cast<std::uint32_t>(baudrate);
-	return IoctlResult(ioctl(fd_, PX4_CARD_SET_BAUDRATE, &value));
+	int ret = IoctlResult(ioctl(fd_, PX4_CARD_SET_BAUDRATE, &value));
+	if (!ret && baudrate == IT930X_UART_BAUDRATE_38400)
+		std::fprintf(stderr, "ifd-px4: A-CAS ATR selected 38400 baud\n");
+	return ret;
 }
 
 int LinuxCardDevice::IsCardDataReady(bool &ready)
@@ -175,7 +178,11 @@ int LinuxCardDevice::WriteCardData(const std::uint8_t *buf, std::uint8_t len)
 	px4_card_data data{};
 	data.length = len;
 	std::memcpy(data.data, buf, len);
-	return IoctlResult(ioctl(fd_, PX4_CARD_WRITE, &data));
+	int ret = IoctlResult(ioctl(fd_, PX4_CARD_WRITE, &data));
+	if (!ret && len >= 5 && buf[0] == 0x00 && buf[1] == 0xc1 &&
+		buf[2] == 0x01 && buf[3] == 0xfe)
+		std::fprintf(stderr, "ifd-px4: sent A-CAS T=1 IFS(254) request\n");
+	return ret;
 }
 
 } // namespace px4::pcsc

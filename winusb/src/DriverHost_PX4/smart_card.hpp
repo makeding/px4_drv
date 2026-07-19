@@ -43,7 +43,7 @@ private:
 	int WaitCardDataReady(const Deadline &deadline);
 	int ParseAtr(const std::vector<std::uint8_t> &atr,
 		     std::size_t &expected_length, AtrParameters &parameters) const;
-	int InitializeT1(bool resynchronize);
+	int InitializeT1(bool resynchronize, std::uint8_t ifsd);
 	int SendBlock(std::uint8_t pcb, const std::uint8_t *data, std::size_t length);
 	int ReceiveBlock(std::uint8_t &pcb, std::vector<std::uint8_t> &data,
 			 const Deadline &deadline);

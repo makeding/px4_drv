@@ -152,8 +152,10 @@ int SmartCard::Reset(std::vector<std::uint8_t> &atr)
 	present_ = true;
 	card_ifsc_ = parameters.ifsc;
 	use_crc_ = parameters.use_crc;
-	/* 既存 B-CAS の開始手順は維持し、A-CAS の TA1=13 だけ通常開始を IFS から行う */
-	ret = InitializeT1(parameters.baudrate != IT930X_UART_BAUDRATE_38400);
+	const bool is_acas = parameters.baudrate == IT930X_UART_BAUDRATE_38400;
+	/* A-CAS は通常開始を IFS(254) から行い、既存 B-CAS の開始手順は維持する */
+	const std::uint8_t ifsd = is_acas ? 254 : (use_crc_ ? 250 : 251);
+	ret = InitializeT1(!is_acas, ifsd);
 	if (ret) {
 		InvalidateSession();
 		return ret;
@@ -312,7 +314,7 @@ int SmartCard::ParseAtr(const std::vector<std::uint8_t> &atr,
 	return 0;
 }
 
-int SmartCard::InitializeT1(bool resynchronize)
+int SmartCard::InitializeT1(bool resynchronize, std::uint8_t ifsd)
 {
 	send_sequence_ = 0;
 	receive_sequence_ = 0;
@@ -331,8 +333,7 @@ int SmartCard::InitializeT1(bool resynchronize)
 			return -EPROTO;
 	}
 
-	/* 最初の I ブロックより前に、UART の1フレーム上限内の IFSD を通知する */
-	std::uint8_t ifsd = use_crc_ ? 250 : 251;
+	/* 最初の I ブロックより前に受信可能な INF の最大長を通知する */
 	int ret = ExchangeBlock(T1_S_BLOCK | T1_S_IFS, &ifsd, 1, pcb, data,
 		deadline);
 	if (ret)

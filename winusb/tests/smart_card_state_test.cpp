@@ -90,6 +90,8 @@ public:
 		const std::uint8_t pcb = buffer[1];
 		written_pcbs.push_back(pcb);
 		const std::uint8_t data_length = buffer[2];
+		if (pcb == 0xc1 && data_length == 1)
+			ifs_values.push_back(buffer[3]);
 		std::size_t expected_length = static_cast<std::size_t>(data_length) +
 			(expected_crc ? 5 : 4);
 		if (expected_length != length || !ValidateEdc(buffer, length))
@@ -197,6 +199,7 @@ public:
 	::it930x_uart_baudrate baudrate = IT930X_UART_BAUDRATE_9600;
 	bool expected_crc = false;
 	std::vector<std::uint8_t> written_pcbs;
+	std::vector<std::uint8_t> ifs_values;
 	std::deque<std::uint8_t> read_queue;
 };
 
@@ -230,7 +233,8 @@ int main()
 		present && initialized && atr.size() == 13 && device->reset_count == 1 &&
 		device->baudrate == IT930X_UART_BAUDRATE_19200 &&
 		device->written_pcbs.size() == 2 && device->written_pcbs[0] == 0xc0 &&
-		device->written_pcbs[1] == 0xc1,
+		device->written_pcbs[1] == 0xc1 && device->ifs_values.size() == 1 &&
+		device->ifs_values[0] == 251,
 		"Card insertion did not initialize the session.") && succeeded;
 
 	const std::uint8_t apdu[] = { 0x90, 0x30, 0x00, 0x00, 0x00 };
@@ -333,8 +337,9 @@ int main()
 	succeeded = Check(acas_card.Open() == 0 &&
 		acas_device->baudrate == IT930X_UART_BAUDRATE_38400 &&
 		acas_device->written_pcbs.size() == 1 &&
-		acas_device->written_pcbs[0] == 0xc1,
-		"A-CAS ATR did not select 38400bps and direct IFS initialization.") &&
+		acas_device->written_pcbs[0] == 0xc1 &&
+		acas_device->ifs_values.size() == 1 && acas_device->ifs_values[0] == 254,
+		"A-CAS ATR did not select 38400bps and direct IFS(254) initialization.") &&
 		succeeded;
 	acas_card.Close();
 
