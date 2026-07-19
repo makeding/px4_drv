@@ -48,7 +48,7 @@ SmartCard::~SmartCard()
 	Close();
 }
 
-int SmartCard::Open()
+int SmartCard::Open(bool initialize_present_card)
 {
 	if (open_)
 		return -EALREADY;
@@ -65,7 +65,7 @@ int SmartCard::Open()
 		return ret;
 	}
 	/* カードなしでも UART を開いたまま待機し、後からの挿入を検出する */
-	if (detected) {
+	if (detected && initialize_present_card) {
 		ret = Reset(atr_);
 		if (ret) {
 			Close();
@@ -87,7 +87,8 @@ void SmartCard::Close() noexcept
 }
 
 int SmartCard::GetStatus(bool &present, bool &initialized,
-			 std::vector<std::uint8_t> &atr)
+			 std::vector<std::uint8_t> &atr,
+			 bool initialize_present_card)
 {
 	if (!open_)
 		return -ENODEV;
@@ -101,7 +102,7 @@ int SmartCard::GetStatus(bool &present, bool &initialized,
 	/* 抜去後の ATR と T=1 シーケンスは再挿入されたカードへ引き継がない */
 	if (!present)
 		InvalidateSession();
-	else if (!initialized_) {
+	else if (!initialized_ && initialize_present_card) {
 		/* 状態監視だけの利用者にも正しい ATR を返せるよう挿入時に初期化する */
 		int reset_ret = Reset(atr);
 		if (reset_ret)

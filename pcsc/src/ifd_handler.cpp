@@ -6,6 +6,7 @@ extern "C" {
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -29,7 +30,8 @@ struct Reader final {
 	{
 		if (open)
 			return 0;
-		int ret = card.Open();
+		/* PC/SC の reader 登録は、挿入済みカードの ATR/T=1 初期化結果に依存させない。 */
+		int ret = card.Open(false);
 		if (!ret)
 			open = true;
 		return ret;
@@ -53,6 +55,15 @@ struct Reader final {
 
 std::mutex readers_lock;
 std::unordered_map<DWORD, std::shared_ptr<Reader>> readers;
+
+void LogError(const char *operation, int error)
+{
+	if (error == px4::SMART_CARD_NO_MEDIUM)
+		std::fprintf(stderr, "ifd-px4: %s failed: no card\n", operation);
+	else
+		std::fprintf(stderr, "ifd-px4: %s failed: %d (%s)\n", operation,
+			error, std::strerror(error < 0 ? -error : error));
+}
 
 std::shared_ptr<Reader> GetReader(DWORD lun)
 {
@@ -113,8 +124,10 @@ extern "C" RESPONSECODE IFDHCreateChannelByName(DWORD Lun, LPSTR DeviceName)
 	{
 		std::lock_guard<std::mutex> lock(reader->lock);
 		int ret = reader->EnsureOpen();
-		if (ret)
+		if (ret) {
+			LogError("open reader", ret);
 			return MapError(ret);
+		}
 	}
 
 	std::lock_guard<std::mutex> lock(readers_lock);
@@ -167,7 +180,7 @@ extern "C" RESPONSECODE IFDHGetCapabilities(DWORD Lun, DWORD Tag,
 			return MapError(ret);
 		bool present = false;
 		bool initialized = false;
-		ret = reader->card.GetStatus(present, initialized, reader->atr);
+		ret = reader->card.GetStatus(present, initialized, reader->atr, false);
 		if (ret)
 			return MapError(ret);
 		if (!present || !initialized)
@@ -236,10 +249,13 @@ extern "C" RESPONSECODE IFDHPowerICC(DWORD Lun, DWORD Action, PUCHAR Atr,
 		return IFD_NOT_SUPPORTED;
 
 	int ret = reader->EnsureOpen();
-	if (ret)
+	if (ret) {
+		LogError("open reader for power action", ret);
 		return MapError(ret);
+	}
 	ret = reader->card.Reset(reader->atr);
 	if (ret) {
+		LogError("reset card", ret);
 		*AtrLength = 0;
 		RESPONSECODE mapped = MapError(ret);
 		return mapped == IFD_COMMUNICATION_ERROR ? IFD_ERROR_POWER_ACTION : mapped;
@@ -261,13 +277,17 @@ extern "C" RESPONSECODE IFDHTransmitToICC(DWORD Lun,
 	std::lock_guard<std::mutex> lock(reader->lock);
 
 	int ret = reader->EnsureOpen();
-	if (ret)
+	if (ret) {
+		LogError("open reader for transmit", ret);
 		return MapError(ret);
+	}
 	std::size_t receive_length = *RxLength;
 	ret = reader->card.Transmit(TxBuffer, TxLength, RxBuffer, receive_length);
 	*RxLength = receive_length;
-	if (ret)
+	if (ret) {
+		LogError("transmit APDU", ret);
 		return MapError(ret);
+	}
 	if (RecvPci) {
 		RecvPci->Protocol = SCARD_PROTOCOL_T1;
 		RecvPci->Length = sizeof(*RecvPci);
@@ -298,12 +318,17 @@ extern "C" RESPONSECODE IFDHICCPresence(DWORD Lun)
 	std::lock_guard<std::mutex> lock(reader->lock);
 
 	int ret = reader->EnsureOpen();
-	if (ret)
+	if (ret) {
+		LogError("open reader for presence", ret);
 		return MapError(ret);
+	}
 	bool present = false;
 	bool initialized = false;
-	ret = reader->card.GetStatus(present, initialized, reader->atr);
-	if (ret)
+	/* Presence は物理状態だけを返し、カードの電源投入と T=1 初期化は PowerICC に任せる。 */
+	ret = reader->card.GetStatus(present, initialized, reader->atr, false);
+	if (ret) {
+		LogError("read card presence", ret);
 		return MapError(ret);
+	}
 	return present ? IFD_ICC_PRESENT : IFD_ICC_NOT_PRESENT;
 }

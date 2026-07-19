@@ -22,9 +22,10 @@ public:
 	SmartCard(SmartCard &&) = delete;
 	SmartCard& operator=(SmartCard &&) = delete;
 
-	int Open();
+	int Open(bool initialize_present_card = true);
 	void Close() noexcept;
-	int GetStatus(bool &present, bool &initialized, std::vector<std::uint8_t> &atr);
+	int GetStatus(bool &present, bool &initialized, std::vector<std::uint8_t> &atr,
+		      bool initialize_present_card = true);
 	int Reset(std::vector<std::uint8_t> &atr);
 	int Transmit(const std::uint8_t *send_buf, std::size_t send_len,
 		     std::uint8_t *recv_buf, std::size_t &recv_len);

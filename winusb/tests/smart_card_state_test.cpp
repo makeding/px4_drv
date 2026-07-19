@@ -313,6 +313,26 @@ int main()
 		"TA3 / TC3 CRC parameters were not applied.") && succeeded;
 	crc_card.Close();
 
+	/* PC/SC の reader 登録では、挿入済みカードを初期化せず物理状態だけ取得できる。 */
+	auto deferred_device = std::make_shared<MockCardDevice>();
+	deferred_device->is_present = true;
+	px4::SmartCard deferred_card(deferred_device);
+	bool deferred_present = false;
+	bool deferred_initialized = true;
+	std::vector<std::uint8_t> deferred_atr;
+	succeeded = Check(deferred_card.Open(false) == 0 &&
+		deferred_device->reset_count == 0 &&
+		deferred_card.GetStatus(deferred_present, deferred_initialized,
+			deferred_atr, false) == 0 && deferred_present &&
+		!deferred_initialized && deferred_atr.empty() &&
+		deferred_device->reset_count == 0,
+		"Deferred card initialization did not preserve reader availability.") &&
+		succeeded;
+	succeeded = Check(deferred_card.Reset(deferred_atr) == 0 &&
+		deferred_device->reset_count == 1,
+		"Deferred card initialization did not reset on power up.") && succeeded;
+	deferred_card.Close();
+
 	card.Close();
 	succeeded = Check(!device->is_open, "Closing the reader failed.") && succeeded;
 	std::printf("smart_card_state_test: %s\n", succeeded ? "passed" : "failed");
