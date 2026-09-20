@@ -20,6 +20,7 @@
 
 #define IT930X_CMD_REG_READ		0x00
 #define IT930X_CMD_REG_WRITE		0x01
+#define IT930X_CMD_IR_GET		0x18
 #define IT930X_CMD_QUERYINFO		0x22
 #define IT930X_CMD_BOOT			0x23
 #define IT930X_CMD_FW_SCATTER_WRITE	0x29
@@ -104,6 +105,7 @@ int it930x_write_gpio(struct it930x_bridge *it930x, int gpio, bool high);
 int it930x_set_pid_filter(struct it930x_bridge *it930x, int input_idx,
 			  struct it930x_pid_filter *filter);
 int it930x_purge_psb(struct it930x_bridge *it930x, int timeout);
+int it930x_ir_get(struct it930x_bridge *it930x, u8 code[4]);
 int it930x_bcas_init(struct it930x_bridge *it930x);
 int it930x_bcas_reset_card(struct it930x_bridge *it930x);
 int it930x_bcas_check_ready(struct it930x_bridge *it930x, bool *ready);

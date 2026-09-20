@@ -82,6 +82,7 @@ static int it930x_ctrl_msg(struct it930x_bridge *it930x,
 			   u8 *result, bool no_rx)
 {
 	int ret;
+	bool ir_empty = false;
 	struct it930x_priv *priv = it930x->priv;
 	u8 *buf, len, seq;
 	u16 csum, csum2;
@@ -147,6 +148,13 @@ static int it930x_ctrl_msg(struct it930x_bridge *it930x,
 	}
 
 	if (buf[2]) {
+		/* IR_GET の result=1 は通信失敗ではなく、未受信を示す。 */
+		if (cmd == IT930X_CMD_IR_GET && buf[2] == 1) {
+			ir_empty = true;
+			ret = -EAGAIN;
+			goto exit;
+		}
+
 		dev_err(it930x->dev,
 			"it930x_ctrl_msg: error returned. (result: %u, csum: 0x%04x)\n",
 			buf[2], csum);
@@ -165,7 +173,7 @@ static int it930x_ctrl_msg(struct it930x_bridge *it930x,
 		*result = buf[2];
 
 exit:
-	if (ret)
+	if (ret && !ir_empty)
 		dev_err(it930x->dev,
 			"it930x_ctrl_msg: operation failed. (cmd: 0x%04x, ret: %d)\n",
 			cmd, ret);
@@ -173,6 +181,32 @@ exit:
 	mutex_unlock(&priv->ctrl_lock);
 
 	return ret;
+}
+
+int it930x_ir_get(struct it930x_bridge *it930x, u8 code[4])
+{
+	int ret;
+	struct it930x_ctrl_buf rb;
+
+	if (!it930x || !code)
+		return -EINVAL;
+
+	rb.buf = code;
+	rb.len = 4;
+
+	ret = it930x_ctrl_msg(it930x, IT930X_CMD_IR_GET,
+			      NULL, &rb, NULL, false);
+	if (ret)
+		return ret;
+
+	if (rb.len != 4) {
+		dev_err(it930x->dev,
+			"it930x_ir_get: unexpected response length. (len: %u)\n",
+			rb.len);
+		return -EBADMSG;
+	}
+
+	return 0;
 }
 
 int it930x_read_regs(struct it930x_bridge *it930x, u32 reg, u8 *rbuf, u8 len)

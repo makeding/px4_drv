@@ -1331,6 +1331,7 @@ int px4_device_init(struct px4_device *px4, struct device *dev,
 	px4->streaming_count = 0;
 	px4->card_open = false;
 	memset(&px4->card, 0, sizeof(px4->card));
+	memset(&px4->ir, 0, sizeof(px4->ir));
 
 	for (i = 0; i < PX4_CHRDEV_NUM; i++) {
 		struct px4_chrdev *chrdev4 = &px4->chrdev4[i];
@@ -1496,6 +1497,13 @@ int px4_device_init(struct px4_device *px4, struct device *dev,
 		dev_warn(px4->dev,
 			 "px4_card_device_register() failed. (ret: %d)\n",
 			 ret);
+
+	ret = px4_ir_device_register(&px4->ir, px4);
+	if (ret)
+		/* 補助機能の登録失敗で既存の TS 受信を中止しない。 */
+		dev_warn(px4->dev,
+			 "px4_ir_device_register() failed. (ret: %d)\n",
+			 ret);
 	return 0;
 
 fail_chrdev:
@@ -1546,6 +1554,7 @@ void px4_device_term(struct px4_device *px4)
 		"px4_device_term: kref count: %u\n", kref_read(&px4->kref));
 
 	atomic_xchg(&px4->available, 0);
+	px4_ir_device_unregister(&px4->ir);
 	px4_card_device_unregister(&px4->card);
 
 	mutex_lock(&px4->lock);

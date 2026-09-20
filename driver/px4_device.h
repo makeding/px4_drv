@@ -17,6 +17,7 @@
 
 #include "px4_mldev.h"
 #include "px4_card.h"
+#include "px4_ir.h"
 #include "ptx_chrdev.h"
 #include "it930x.h"
 #include "tc90522.h"
@@ -56,6 +57,7 @@ struct px4_device {
 	unsigned int streaming_count;
 	bool card_open;
 	struct px4_card_device card;
+	struct px4_ir_device ir;
 	struct ptx_chrdev_group *chrdev_group;
 	struct px4_chrdev chrdev4[PX4_CHRDEV_NUM];
 	struct it930x_bridge it930x;
