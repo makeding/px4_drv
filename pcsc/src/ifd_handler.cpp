@@ -3,13 +3,16 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <chrono>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -22,14 +25,39 @@ namespace {
 /* pcsc-lite converts the public SCARD_PROTOCOL_T1 bit (2) to IFD protocol T=1 (1). */
 constexpr DWORD IFD_PROTOCOL_T1 = 1;
 
+#ifdef IFD_HANDLER_TEST
+using CardDeviceFactory = std::shared_ptr<px4::CardDevice> (*)(const char *);
+CardDeviceFactory card_device_factory;
+#endif
+
+std::shared_ptr<px4::CardDevice> CreateCardDevice(const char *device_name)
+{
+#ifdef IFD_HANDLER_TEST
+	if (card_device_factory)
+		return card_device_factory(device_name);
+#endif
+	return std::make_shared<px4::pcsc::LinuxCardDevice>(device_name ? device_name : "");
+}
+
+bool DebugLoggingEnabled()
+{
+	const char *value = std::getenv("PX4_IFD_DEBUG");
+	return value && value[0] != '\0' && std::strcmp(value, "0") != 0;
+}
+
+long long LogTimestampMilliseconds()
+{
+	return std::chrono::duration_cast<std::chrono::milliseconds>(
+		std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
 struct Reader final {
 	explicit Reader(const char *device_name)
-		: device(std::make_shared<px4::pcsc::LinuxCardDevice>(
-			device_name ? device_name : "")), card(device)
+		: device(CreateCardDevice(device_name)), card(device)
 	{
 	}
 
-	int EnsureOpen()
+	int EnsureOpen(DWORD lun)
 	{
 		if (open)
 			return 0;
@@ -37,23 +65,33 @@ struct Reader final {
 		int ret = card.Open(false);
 		if (!ret)
 			open = true;
+		if (!ret && DebugLoggingEnabled())
+			std::fprintf(stderr, "ifd-px4: lun=%lu time=%lld device=open\n",
+				static_cast<unsigned long>(lun), LogTimestampMilliseconds());
 		return ret;
 	}
 
-	void Close()
+	void Close(DWORD lun)
 	{
 		if (!open)
 			return;
 		card.Close();
 		open = false;
 		atr.clear();
+		if (DebugLoggingEnabled())
+			std::fprintf(stderr, "ifd-px4: lun=%lu time=%lld device=close\n",
+				static_cast<unsigned long>(lun), LogTimestampMilliseconds());
 	}
 
 	std::mutex lock;
-	std::shared_ptr<px4::pcsc::LinuxCardDevice> device;
+	std::shared_ptr<px4::CardDevice> device;
 	px4::SmartCard card;
 	bool open = false;
 	std::vector<std::uint8_t> atr;
+	/* 診断用の前回値は物理検出や初期化の判断には使わない。 */
+	std::optional<bool> last_presence;
+	bool presence_error = false;
+	unsigned long long presence_checks = 0;
 };
 
 std::mutex readers_lock;
@@ -66,6 +104,41 @@ void LogError(const char *operation, int error)
 	else
 		std::fprintf(stderr, "ifd-px4: %s failed: %d (%s)\n", operation,
 			error, std::strerror(error < 0 ? -error : error));
+}
+
+void LogPresence(DWORD lun, Reader &reader, const char *operation, bool present, int error,
+	std::chrono::steady_clock::duration elapsed)
+{
+	const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+		elapsed).count();
+	reader.presence_checks++;
+	const long long timestamp = LogTimestampMilliseconds();
+
+	if (error) {
+		std::fprintf(stderr, "ifd-px4: lun=%lu time=%lld presence error=%d (%s) operation=%s\n",
+			static_cast<unsigned long>(lun), timestamp, error,
+			std::strerror(error < 0 ? -error : error), operation);
+		reader.presence_error = true;
+	} else if (reader.presence_error) {
+		std::fprintf(stderr, "ifd-px4: lun=%lu time=%lld presence recovered=%s\n",
+			static_cast<unsigned long>(lun), timestamp,
+			present ? "present" : "empty");
+		reader.presence_error = false;
+	}
+	if (!error && (!reader.last_presence || *reader.last_presence != present)) {
+		std::fprintf(stderr, "ifd-px4: lun=%lu time=%lld card=%s\n",
+			static_cast<unsigned long>(lun), timestamp,
+			present ? "present" : "empty");
+	}
+	if (!error)
+		reader.last_presence = present;
+	if (DebugLoggingEnabled()) {
+		std::fprintf(stderr,
+			"ifd-px4: lun=%lu time=%lld presence-check=%llu elapsed-ms=%lld result=%s\n",
+			static_cast<unsigned long>(lun), timestamp, reader.presence_checks,
+			static_cast<long long>(elapsed_ms), error ? "error" :
+			(present ? "present" : "empty"));
+	}
 }
 
 std::shared_ptr<Reader> GetReader(DWORD lun)
@@ -126,7 +199,7 @@ extern "C" RESPONSECODE IFDHCreateChannelByName(DWORD Lun, LPSTR DeviceName)
 	auto reader = std::make_shared<Reader>(DeviceName);
 	{
 		std::lock_guard<std::mutex> lock(reader->lock);
-		int ret = reader->EnsureOpen();
+		int ret = reader->EnsureOpen(Lun);
 		if (ret) {
 			LogError("open reader", ret);
 			return MapError(ret);
@@ -160,7 +233,7 @@ extern "C" RESPONSECODE IFDHCloseChannel(DWORD Lun)
 	}
 
 	std::lock_guard<std::mutex> lock(reader->lock);
-	reader->Close();
+	reader->Close(Lun);
 	return IFD_SUCCESS;
 }
 
@@ -178,7 +251,7 @@ extern "C" RESPONSECODE IFDHGetCapabilities(DWORD Lun, DWORD Tag,
 	case SCARD_ATTR_ATR_STRING:
 #endif
 	{
-		int ret = reader->EnsureOpen();
+		int ret = reader->EnsureOpen(Lun);
 		if (ret)
 			return MapError(ret);
 		bool present = false;
@@ -244,14 +317,14 @@ extern "C" RESPONSECODE IFDHPowerICC(DWORD Lun, DWORD Action, PUCHAR Atr,
 	std::lock_guard<std::mutex> lock(reader->lock);
 
 	if (Action == IFD_POWER_DOWN) {
-		reader->Close();
+		reader->Close(Lun);
 		*AtrLength = 0;
 		return IFD_SUCCESS;
 	}
 	if (Action != IFD_POWER_UP && Action != IFD_RESET)
 		return IFD_NOT_SUPPORTED;
 
-	int ret = reader->EnsureOpen();
+	int ret = reader->EnsureOpen(Lun);
 	if (ret) {
 		LogError("open reader for power action", ret);
 		return MapError(ret);
@@ -280,7 +353,7 @@ extern "C" RESPONSECODE IFDHTransmitToICC(DWORD Lun,
 		return IFD_COMMUNICATION_ERROR;
 	std::lock_guard<std::mutex> lock(reader->lock);
 
-	int ret = reader->EnsureOpen();
+	int ret = reader->EnsureOpen(Lun);
 	if (ret) {
 		LogError("open reader for transmit", ret);
 		return MapError(ret);
@@ -321,9 +394,10 @@ extern "C" RESPONSECODE IFDHICCPresence(DWORD Lun)
 		return IFD_NO_SUCH_DEVICE;
 	std::lock_guard<std::mutex> lock(reader->lock);
 
-	int ret = reader->EnsureOpen();
+	const auto started = std::chrono::steady_clock::now();
+	int ret = reader->EnsureOpen(Lun);
 	if (ret) {
-		LogError("open reader for presence", ret);
+		LogPresence(Lun, *reader, "open", false, ret, std::chrono::steady_clock::now() - started);
 		return MapError(ret);
 	}
 	bool present = false;
@@ -331,8 +405,17 @@ extern "C" RESPONSECODE IFDHICCPresence(DWORD Lun)
 	/* Presence は物理状態だけを返し、カードの電源投入と T=1 初期化は PowerICC に任せる。 */
 	ret = reader->card.GetStatus(present, initialized, reader->atr, false);
 	if (ret) {
-		LogError("read card presence", ret);
+		LogPresence(Lun, *reader, "detect", false, ret, std::chrono::steady_clock::now() - started);
 		return MapError(ret);
 	}
+	/* 抜去・再挿入と一時的な GPIO 読み出し失敗を、カード内容を出さずに追跡する。 */
+	LogPresence(Lun, *reader, "detect", present, 0, std::chrono::steady_clock::now() - started);
 	return present ? IFD_ICC_PRESENT : IFD_ICC_NOT_PRESENT;
 }
+
+#ifdef IFD_HANDLER_TEST
+void IFDHSetCardDeviceFactoryForTest(CardDeviceFactory factory)
+{
+	card_device_factory = factory;
+}
+#endif
